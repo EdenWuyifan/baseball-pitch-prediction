@@ -1,0 +1,6 @@
+baseballcv
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+flaml>=2.3.6
+lightgbm>=4.1
