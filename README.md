@@ -206,6 +206,26 @@ pitch7002.mp4,ball,14
 pitch7003.mp4,strike,3
 ```
 
+## 🔄 Turning Plate Predictions Into Labels
+
+The trajectory regressor produces `trajectory_regression_predictions.csv` with `plate_x_pred` and `plate_z_pred`. To convert those physics predictions into the leaderboard-required labels, run:
+
+```bash
+python derive_plate_labels.py \
+  --predictions trajectory_regression_predictions.csv \
+  --test-features data/test_features.csv \
+  --output plate_based_submission.csv
+```
+
+Internally the script:
+1. Concatenates the regression output with `test_features.csv` (aligned by `file_name`).
+2. Applies the MLB strike-zone geometry (see **What You Must Predict**) to derive:
+   - `pitch_class`: `"strike"` if the predicted crossing is within the strike zone expanded by the ball radius; otherwise `"ball"`.
+   - `zone`: Gameday zones 1–14 based on lateral thirds and vertical thirds, with 11–14 reserved for the “shadow” regions just outside the plate.
+3. Writes the final `plate_based_submission.csv`, ready to submit or feed into downstream classifiers.
+
+Use this helper to sanity-check whether a direct transformation from `(plate_x_pred, plate_z_pred)` to the categorical targets is viable for your current regression quality.*** End Patch
+
 ## 🎯 Final Summary: What You Must Predict
 
 1. **`pitch_class`**: `strike` or `ball`

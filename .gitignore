@@ -9,11 +9,14 @@ __pycache__/
 
 *.mp4
 *.ext3
+*.csv
 
 weights/
 runs/
 rfdetr_runs/
 catboost_info/
 models/
+logs/
+catboost_*
 
 *_submission.csv

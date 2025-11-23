@@ -53,10 +53,21 @@ def infer_ft_per_px(
     fallback_scale: float,
 ) -> Optional[float]:
     scales: list[float] = []
+
+    # 1) Use rubber–homeplate center separation if we have both
+    if homeplate is not None and rubber is not None:
+        hp = np.array(homeplate.center, dtype=float)
+        rb = np.array(rubber.center, dtype=float)
+        sep_px = np.linalg.norm(hp - rb)
+        if sep_px > 1e-6:
+            scales.append(PLATE_TO_RUBBER_FT / sep_px)
+
+    # 2) Fall back to object widths if needed
     if homeplate is not None and homeplate.width_px > 0:
         scales.append(HOME_PLATE_WIDTH_FT / homeplate.width_px)
     if rubber is not None and rubber.width_px > 0:
         scales.append(PITCHING_RUBBER_WIDTH_FT / rubber.width_px)
+
     if scales:
         return float(np.median(scales))
     return fallback_scale
@@ -112,12 +123,44 @@ def iter_projected_positions(
         yield frame_idx, x_ft, z_ft
 
 
+def estimate_plate_crossing(
+    samples: list[tuple[int, float, float]],
+    target_depth: float = 0.0,  # plate plane in current coords
+) -> Optional[tuple[float, float, float]]:
+    if len(samples) < 3:
+        return None
+
+    frames = np.array([f for (f, _, _) in samples], dtype=float)
+    xs = np.array([x for (_, x, _) in samples], dtype=float)
+    zs = np.array([z for (_, _, z) in samples], dtype=float)
+
+    deg = 2 if len(samples) >= 5 else 1
+    # Fit z(frame)
+    z_coeffs = np.polyfit(frames, zs, deg)
+    # Solve z(frame) = target_depth
+    z_coeffs[-1] -= target_depth
+    roots = np.roots(z_coeffs)
+    real_roots = [r.real for r in roots if np.isreal(r)]
+    if not real_roots:
+        return None
+
+    t_min, t_max = frames.min(), frames.max()
+    # Prefer roots near or within observed range
+    t_plate = min(real_roots, key=lambda r: max(t_min - r, 0.0, r - t_max))
+
+    # Fit x(frame) and evaluate at t_plate
+    x_coeffs = np.polyfit(frames, xs, deg)
+    x_plate = float(np.polyval(x_coeffs, t_plate))
+    return x_plate, target_depth, float(t_plate)
+
+
 def main() -> None:
     detections_path = Path("ball_detections_test.csv")
     df = pd.read_csv(detections_path)
     grouped = df.groupby("file_name")
 
     for file_name, group in grouped:
+        print(f"Processing {file_name}")
         n_frames = int(group["frame_index"].max()) + 1
         baseball_frames: list[Optional[LandmarkMeasurement]] = [None] * n_frames
         homeplate_frames: list[Optional[LandmarkMeasurement]] = [None] * n_frames
@@ -140,5 +183,14 @@ def main() -> None:
                 fallback_scale=DEFAULT_FT_PER_PX,
             )
         )
-        print(f"{file_name}: projected {len(projected_positions)} samples to feet")
 
+        print("Projected positions:")
+        for frame_idx, x_ft, z_ft in projected_positions:
+            print(f"Frame {frame_idx}: x={x_ft:.2f} ft, z={z_ft:.2f} ft")
+
+        plate_crossing = estimate_plate_crossing(projected_positions)
+        print(f"{file_name}: plate crossing = {plate_crossing}")
+
+
+if __name__ == "__main__":
+    main()
