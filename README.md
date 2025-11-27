@@ -1,6 +1,7 @@
 # 🎯 Video-Only Early-Flight Pitch Classification Challenge
 
 ## Overview
+
 **Predict the Strike Zone… Before the Ball Gets There**
 
 Baseball pitchers throw a ball over 60 feet toward home plate, and human umpires must decide—within milliseconds—whether a pitch is a strike or a ball. But what if we try to make that decision before the pitch even reaches the plate?
@@ -8,11 +9,14 @@ Baseball pitchers throw a ball over 60 feet toward home plate, and human umpires
 In this competition, your goal is to build a model that predicts whether a pitch will end up inside the strike zone using only a short video clip of the ball's early flight.
 
 ### Input Data Types
+
 You will be given two types of clips:
+
 - **Full Pitch clips** (1.2s) — roughly the entire pitch
 - **Trimmed clips** (0.26–0.75s) — short physics-based clips aligned to ~80% of the ball's time-of-flight
 
 ### Task
+
 For each clip, you must predict whether the pitch will or will not cross the strike zone, and which part of the zone, even though the ball has not yet reached the plate.
 
 ## 🎯 What Are You Predicting?
@@ -20,19 +24,24 @@ For each clip, you must predict whether the pitch will or will not cross the str
 Your goal is simple: predict the final pitch outcome using only early-flight video.
 
 ### Ground Truth Source
+
 Labels come from real Statcast trajectory measurements, not umpire calls.
 
 ### Key Parameters
+
 Each pitch includes:
+
 - `plate_x` — horizontal plate crossing location
 - `plate_z` — vertical plate crossing location
 - `sz_top` — top of batter's strike zone
 - `sz_bot` — bottom of batter's strike zone
 
 ### Strike Determination
+
 A pitch is labeled **strike** if the center of the baseball passes through the strike-zone volume (expanded slightly by the ball's radius ≈1.5 inches). Otherwise, it is labeled **ball**.
 
 ### MLB Gameday Strike Zone
+
 MLB's standard strike-zone grid (catcher's view):
 
 ```
@@ -42,30 +51,36 @@ MLB's standard strike-zone grid (catcher's view):
 
 **Challenge**: Your model sees only the start of the ball's flight but must infer where it will end up.
 
-
 ## 📊 Evaluation
 
 Submissions are evaluated using a **weighted multi-target accuracy**, combining:
 
 ### 1. Pitch Class Prediction (70% weight)
+
 Predict whether the pitch ends up in the strike zone or not. For each test video, `pitch_class` must be one of:
+
 - `strike`
 - `ball`
 
 ### 2. Zone Prediction (30% weight)
+
 Predict the exact MLB Gameday zone (1-14) where the pitch will end up.
 
 ### Zone Accuracy Formula
+
 ```
 AccuracyZone = (1/N) * Σ I(ẑ_i = z_i)
 ```
 
 ### Final Competition Score
+
 The final score is a weighted combination:
+
 - **Class Accuracy**: 70% weight
 - **Zone Accuracy**: 30% weight
 
 **Scoring Examples:**
+
 - If `pitch_class` is correct but `zone` is wrong → earn 0.7 for that row
 - If both are correct → earn 1.0 (full credit)
 
@@ -83,27 +98,31 @@ pitch3.mp4,strike,3
 ...
 ```
 
-
-
 ## 📋 Dataset Description
 
 ### Ground Truth Labeling (Statcast Parameters)
+
 Every pitch uses MLB's Statcast tracking to determine ground-truth strike vs ball.
 
 #### Plate Crossing Location
+
 - `plate_x`, `plate_z`: Define where the ball crossed the front plane of home plate
   - Positive `plate_x` → catcher's right
   - Negative `plate_x` → catcher's left
   - `plate_z` → height of the pitch at the plate
 
 #### Strike Zone Dimensions
+
 - `sz_top`, `sz_bot`: Personalized strike-zone height for each batter
 
 #### Strike Criteria
+
 A pitch is a **strike** if:
+
 ```
 |plate_x| ≤ (17/24 + r) ∧ sz_bot - r ≤ plate_z ≤ sz_top + r
 ```
+
 Where `r` ≈ 1.5 inches (baseball radius).
 
 ### Time-of-Flight (ToF): Why Clips Are So Short
@@ -111,6 +130,7 @@ Where `r` ≈ 1.5 inches (baseball radius).
 Each trimmed test clip is **0.26–0.75 seconds** long, representing roughly **80% of the ball's Time-of-Flight**.
 
 #### ToF Estimation Formula
+
 ```
 Distance = 60.5 ft - release_extension
 Time = Distance / (release_speed * 1.46667)  # mph to ft/s conversion
@@ -121,16 +141,21 @@ Time = Distance / (release_speed * 1.46667)  # mph to ft/s conversion
 ### Dataset Overview
 
 #### Training Set
+
 - `train_trimmed/` – 0.26–0.75s physics-aligned clips (80% of estimated ToF)
 
 #### Test Set
+
 - `test/` – trimmed clips only (same format as training)
 
 #### Video Naming
+
 All videos are anonymized as: `pitch1.mp4`, `pitch2.mp4`, `pitch3.mp4`, ...
+
 ### Available Features
 
 #### Pitch Physics Parameters
+
 - `release_speed`: Speed of the pitch at release (mph)
 - `effective_speed`: Adjusted speed representing how fast the pitch "plays" due to extension
 - `release_spin_rate`: Spin rate (RPM)
@@ -139,6 +164,7 @@ All videos are anonymized as: `pitch1.mp4`, `pitch2.mp4`, `pitch3.mp4`, ...
 - `pfx_x, pfx_z`: Measured horizontal/vertical break of the pitch (inches relative to a spinless trajectory)
 
 #### Batter/Pitcher Context
+
 - `stand`: Batter stance
   - `"L"` = left-handed batter
   - `"R"` = right-handed batter
@@ -151,54 +177,58 @@ All videos are anonymized as: `pitch1.mp4`, `pitch2.mp4`, `pitch3.mp4`, ...
 This competition includes **three CSV files** that define the complete dataset structure.
 
 ### 1. `train_ground_truth.csv` - Training Labels & Metadata
+
 Contains all training labels + full metadata needed to train your model.
 
 **Each row corresponds to one anonymized pitch video.**
 
-| Column | Description |
-|--------|-------------|
-| `file_name` | Anonymized filename (e.g., `pitch1.mp4`) |
-| `plate_x`, `plate_z` | True crossing location of the pitch at the plate (feet) |
-| `sz_top`, `sz_bot` | Personalized top & bottom of the batter's strike zone (feet) |
-| `release_speed` | Pitch velocity at release (mph) |
-| `effective_speed` | Adjusted perceived velocity due to extension |
-| `release_spin_rate` | Spin rate (RPM) |
-| `release_pos_x, y, z` | 3D coordinates of pitch release |
-| `release_extension` | Release point extension toward home plate (feet) |
-| `pfx_x`, `pfx_z` | Horizontal & vertical pitch break (inches) |
-| `stand` | Batter stance (`L` or `R`) |
-| `p_throws` | Pitcher throwing hand (`L` or `R`) |
-| **`pitch_class`** | **Label you must predict** (`strike` or `ball`) |
-| **`zone`** | **MLB Gameday zone number (1–14)** |
+| Column                | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `file_name`           | Anonymized filename (e.g., `pitch1.mp4`)                     |
+| `plate_x`, `plate_z`  | True crossing location of the pitch at the plate (feet)      |
+| `sz_top`, `sz_bot`    | Personalized top & bottom of the batter's strike zone (feet) |
+| `release_speed`       | Pitch velocity at release (mph)                              |
+| `effective_speed`     | Adjusted perceived velocity due to extension                 |
+| `release_spin_rate`   | Spin rate (RPM)                                              |
+| `release_pos_x, y, z` | 3D coordinates of pitch release                              |
+| `release_extension`   | Release point extension toward home plate (feet)             |
+| `pfx_x`, `pfx_z`      | Horizontal & vertical pitch break (inches)                   |
+| `stand`               | Batter stance (`L` or `R`)                                   |
+| `p_throws`            | Pitcher throwing hand (`L` or `R`)                           |
+| **`pitch_class`**     | **Label you must predict** (`strike` or `ball`)              |
+| **`zone`**            | **MLB Gameday zone number (1–14)**                           |
 
 ### 2. `test_features.csv` - Test Metadata (No Labels)
+
 Contains all available metadata **EXCEPT** the columns that would leak the true label.
 
 **Removed columns:** `plate_x`, `plate_z`, `pitch_class`, `zone`
 
-| Column | Description |
-|--------|-------------|
-| `file_name` | Anonymized filename (test video) |
-| `sz_top`, `sz_bot` | Batter strike-zone limits |
-| `release_speed` | Pitch speed (mph) |
-| `effective_speed` | Adjusted speed |
-| `release_spin_rate` | Spin rate (RPM) |
-| `release_pos_x, y, z` | 3D release coordinates |
-| `release_extension` | Extension toward the plate (ft) |
-| `pfx_x`, `pfx_z` | Horizontal/vertical movement |
-| `stand` | Batter stance (`L` / `R`) |
-| `p_throws` | Pitcher throwing hand (`L` / `R`) |
+| Column                | Description                       |
+| --------------------- | --------------------------------- |
+| `file_name`           | Anonymized filename (test video)  |
+| `sz_top`, `sz_bot`    | Batter strike-zone limits         |
+| `release_speed`       | Pitch speed (mph)                 |
+| `effective_speed`     | Adjusted speed                    |
+| `release_spin_rate`   | Spin rate (RPM)                   |
+| `release_pos_x, y, z` | 3D release coordinates            |
+| `release_extension`   | Extension toward the plate (ft)   |
+| `pfx_x`, `pfx_z`      | Horizontal/vertical movement      |
+| `stand`               | Batter stance (`L` / `R`)         |
+| `p_throws`            | Pitcher throwing hand (`L` / `R`) |
 
 ### 3. `test_template.csv` - Submission Template
+
 This is the file you will submit predictions to Kaggle with. Contains the three required columns:
 
-| Column | Description |
-|--------|-------------|
-| `file_name` | Anonymized pitch video (e.g., `pitch7001.mp4`) |
-| **`pitch_class`** | **Predict:** `strike` or `ball` |
-| **`zone`** | **Predict:** MLB Gameday zone (1–14)<br>• Zones 1–9 → inside strike zone<br>• Zones 11–14 → just outside<br>• Must predict exact number |
+| Column            | Description                                                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `file_name`       | Anonymized pitch video (e.g., `pitch7001.mp4`)                                                                                          |
+| **`pitch_class`** | **Predict:** `strike` or `ball`                                                                                                         |
+| **`zone`**        | **Predict:** MLB Gameday zone (1–14)<br>• Zones 1–9 → inside strike zone<br>• Zones 11–14 → just outside<br>• Must predict exact number |
 
 **Example Submission:**
+
 ```csv
 file_name,pitch_class,zone
 pitch7001.mp4,strike,5
@@ -206,9 +236,152 @@ pitch7002.mp4,ball,14
 pitch7003.mp4,strike,3
 ```
 
-## 🔄 Turning Plate Predictions Into Labels
+---
 
-The trajectory regressor produces `trajectory_regression_predictions.csv` with `plate_x_pred` and `plate_z_pred`. To convert those physics predictions into the leaderboard-required labels, run:
+## 🚀 Solution Pipeline
+
+This section describes the end-to-end approach implemented in this repository.
+
+### Overview
+
+The solution follows a **three-stage pipeline**:
+
+1. **Stage 1 – Object Detection**: Run a YOLO model on each video to extract frame-by-frame bounding boxes for **baseball**, **homeplate**, and **rubber**.
+2. **Stage 2 – Plate Crossing Regression**: Combine the detection features with Statcast metadata, then train gradient-boosted regressors (via FLAML AutoML) to predict `plate_x` and `plate_z`.
+3. **Stage 3 – Label Derivation**: Apply the MLB strike-zone geometry to the predicted crossing coordinates, producing the final `pitch_class` and `zone` labels.
+
+---
+
+### Stage 1: Object Detection with YOLO
+
+**Script**: `extract_ball_tracks.py`
+
+We use the `baseballcv` library's pre-trained `ball_tracking` model (YOLOv8-based) to detect three object classes in each video frame:
+
+| Class ID | Class Name |
+| -------- | ---------- |
+| 15       | homeplate  |
+| 16       | baseball   |
+| 17       | rubber     |
+
+#### Running Detection
+
+```bash
+# Training videos
+python extract_ball_tracks.py \
+  --video-dir data/train_trimmed \
+  --output data/train_object_detections.csv \
+  --confidence-threshold 0.25 \
+  --device cuda
+
+# Test videos
+python extract_ball_tracks.py \
+  --video-dir data/test \
+  --output data/test_object_detections.csv \
+  --confidence-threshold 0.25 \
+  --device cuda
+```
+
+#### Output Format
+
+Each row in the output CSV represents one detection:
+
+| Column                             | Description                                              |
+| ---------------------------------- | -------------------------------------------------------- |
+| `file_name`                        | Video filename (e.g., `pitch1.mp4`)                      |
+| `frame_index`                      | 0-based frame number                                     |
+| `detection_index`                  | Detection index within the frame                         |
+| `x_min`, `y_min`, `x_max`, `y_max` | Bounding box coordinates (pixels)                        |
+| `class_id`                         | Numeric class ID                                         |
+| `class_name`                       | Human-readable class (`baseball`, `homeplate`, `rubber`) |
+| `confidence`                       | Model confidence score                                   |
+
+#### Why These Three Objects?
+
+- **Baseball**: Provides the ball's trajectory (start/end positions, velocity, curvature).
+- **Homeplate**: Serves as the coordinate origin and provides pixel-to-feet scale calibration (plate width = 17 inches).
+- **Rubber**: Combined with homeplate, enables rotation alignment so the mound→plate axis is consistent across videos.
+
+---
+
+### Stage 2: Feature Engineering & Regression
+
+**Scripts**: `ml_features.py`, `train_trajectory_regressor.py`
+
+#### Feature Engineering (`ml_features.py`)
+
+The `build_aligned_trajectory_features()` function converts raw detections into a fixed-length feature vector per video:
+
+##### Baseball Features (from earliest and latest detections)
+
+- `baseball_count`: Number of baseball detections
+- `baseball_start_frame`, `baseball_end_frame`: First/last frame indices
+- `baseball_start_x`, `baseball_start_y`: Center of first detection (pixels)
+- `baseball_end_x`, `baseball_end_y`: Center of last detection (pixels)
+- `baseball_*_norm`: Positions normalized relative to homeplate center
+- `baseball_*_rot`: Positions rotated so mound→plate axis aligns with y-axis
+
+##### Landmark Features (averaged across all frames)
+
+- `homeplate_*_mean`: Mean bounding box coordinates
+- `rubber_*_mean`: Mean bounding box coordinates
+- `homeplate_width_px`, `rubber_width_px`: Widths in pixels
+- `plate_rubber_width_ratio`: Ratio for perspective consistency
+- `estimated_ft_per_px`: Scale factor derived from homeplate width (17 in / width_px)
+
+##### Statcast Metadata (from CSV)
+
+- `release_speed`, `effective_speed`, `release_spin_rate`
+- `release_pos_x`, `release_pos_y`, `release_pos_z`
+- `release_extension`, `pfx_x`, `pfx_z`
+- `sz_top`, `sz_bot` (batter's personalized strike zone)
+- `stand`, `p_throws` (categorical: L/R)
+
+#### Training the Regressors (`train_trajectory_regressor.py`)
+
+```bash
+python train_trajectory_regressor.py \
+  --train-meta data/train_ground_truth.csv \
+  --test-meta data/test_features.csv \
+  --train-detections data/train_object_detections.csv \
+  --test-detections data/test_object_detections.csv \
+  --output trajectory_regression_predictions.csv \
+  --random-state 7
+```
+
+The script:
+
+1. Loads metadata and detection CSVs.
+2. Calls `build_aligned_trajectory_features()` to merge detection summaries with metadata.
+3. Fits the shared `FeaturePipeline` (median imputation, categorical encoding).
+4. Trains **two separate FLAML AutoML regressors**:
+   - `plate_x` regressor (horizontal crossing)
+   - `plate_z` regressor (vertical crossing)
+5. Logs model metadata and SHAP feature importance plots to `logs/`.
+6. Writes `trajectory_regression_predictions.csv` with columns: `file_name`, `plate_x_pred`, `plate_z_pred`.
+
+#### FLAML Configuration
+
+- **Task**: Regression
+- **Metric**: MAE (mean absolute error in feet)
+- **Evaluation**: 5-fold cross-validation
+- **Time budget**: 360 seconds per target (adjustable)
+- **Best estimators observed**: XGBoost, LightGBM, CatBoost
+
+#### Achieved Performance (Cross-Validation)
+
+| Target    | Best CV MAE |
+| --------- | ----------- |
+| `plate_x` | ~0.32 ft    |
+| `plate_z` | ~0.27 ft    |
+
+---
+
+### Stage 3: Deriving Labels from Predicted Crossings
+
+**Script**: `derive_plate_labels.py`
+
+Once we have `(plate_x_pred, plate_z_pred)` for each test video, we apply the MLB strike-zone geometry to produce the final submission labels.
 
 ```bash
 python derive_plate_labels.py \
@@ -217,14 +390,76 @@ python derive_plate_labels.py \
   --output plate_based_submission.csv
 ```
 
-Internally the script:
-1. Concatenates the regression output with `test_features.csv` (aligned by `file_name`).
-2. Applies the MLB strike-zone geometry (see **What You Must Predict**) to derive:
-   - `pitch_class`: `"strike"` if the predicted crossing is within the strike zone expanded by the ball radius; otherwise `"ball"`.
-   - `zone`: Gameday zones 1–14 based on lateral thirds and vertical thirds, with 11–14 reserved for the “shadow” regions just outside the plate.
-3. Writes the final `plate_based_submission.csv`, ready to submit or feed into downstream classifiers.
+#### Strike/Ball Classification (`pitch_class`)
 
-Use this helper to sanity-check whether a direct transformation from `(plate_x_pred, plate_z_pred)` to the categorical targets is viable for your current regression quality.*** End Patch
+A pitch is classified as **strike** if:
+
+```
+|plate_x_pred| ≤ (17/24 + r)  AND  sz_bot - r ≤ plate_z_pred ≤ sz_top + r
+```
+
+Where `r = 1.5 / 12` ft (baseball radius). Otherwise, it's a **ball**.
+
+#### Zone Assignment (`zone`)
+
+The strike zone is divided into a 3×3 grid (zones 1–9) plus four shadow zones (11–14):
+
+```
+        Left    Center   Right
+High    [1]      [2]      [3]
+Mid     [4]      [5]      [6]
+Low     [7]      [8]      [9]
+
+Shadow zones:
+  11 = left of zone    12 = above zone
+  13 = right of zone   14 = below zone
+```
+
+Zone boundaries:
+
+- **Horizontal thirds**: `plate_half / 3` (where `plate_half = 17/24` ft)
+- **Vertical thirds**: `(sz_top - sz_bot) / 3`
+
+#### Output
+
+The script produces `plate_based_submission.csv` with:
+
+| Column        | Description         |
+| ------------- | ------------------- |
+| `file_name`   | Test video filename |
+| `pitch_class` | `strike` or `ball`  |
+| `zone`        | Integer 1–14        |
+
+---
+
+### Quick Start: Full Pipeline
+
+```bash
+# 1. Extract detections (GPU recommended)
+python extract_ball_tracks.py --video-dir data/train_trimmed --output data/train_object_detections.csv --device cuda
+python extract_ball_tracks.py --video-dir data/test --output data/test_object_detections.csv --device cuda
+
+# 2. Train regressors and predict plate crossings
+python train_trajectory_regressor.py
+
+# 3. Derive final labels
+python derive_plate_labels.py --output submission.csv
+```
+
+---
+
+### Logging & Diagnostics
+
+All training runs produce artifacts in `logs/`:
+
+- `ml_features_<tag>_<timestamp>.csv`: Head of the feature matrix (sanity check)
+- `plate_x_regressor_<timestamp>.json`: Model metadata, best config, SHAP top features
+- `plate_x_regressor_shap_<timestamp>.png`: SHAP beeswarm plot
+- `plate_z_regressor_*.json/png`: Same for vertical regressor
+
+Use these to diagnose feature importance and iterate on feature engineering.
+
+---
 
 ## 🎯 Final Summary: What You Must Predict
 
