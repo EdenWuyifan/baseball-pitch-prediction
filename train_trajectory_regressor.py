@@ -21,7 +21,12 @@ import numpy as np
 import pandas as pd
 from flaml import AutoML
 
-from ml_features import FeaturePipeline, build_aligned_trajectory_features
+from ml_features import (
+    FeaturePipeline,
+    add_statcast_interactions,
+    augment_statcast_metadata,
+    build_aligned_trajectory_features,
+)
 
 try:  # optional dependency
     import shap  # type: ignore
@@ -32,6 +37,59 @@ except Exception:  # pragma: no cover - shap may be unavailable
 LOG_DIR = Path("logs")
 
 
+def _train_flaml_model(
+    name: str,
+    task: str,
+    metric: str,
+    X: pd.DataFrame,
+    y: np.ndarray,
+    seed: int,
+    time_budget: int,
+) -> AutoML:
+    """Shared FLAML training helper for both regression and classification."""
+    automl = AutoML()
+    settings = {
+        "task": task,
+        "metric": metric,
+        "eval_method": "cv",
+        "seed": seed,
+        "time_budget": time_budget,
+        "verbose": 1,
+    }
+    print(
+        f"Training FLAML {task} model '{name}' "
+        f"(time_budget={settings['time_budget']}s, metric={metric})..."
+    )
+    automl.fit(X_train=X, y_train=y, **settings)
+    best_score = automl.best_loss if automl.best_loss is not None else float("nan")
+    print(
+        f"[{name}] Best CV {metric}≈{best_score:.4f} "
+        f"(estimator={automl.best_estimator})"
+    )
+    return automl
+
+
+def _positive_class_probability(model: AutoML, proba: np.ndarray) -> np.ndarray:
+    """Return the probability of the positive (strike) class."""
+    arr = np.asarray(proba)
+    if arr.ndim == 1:
+        return arr
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        base_model = getattr(model, "model", None)
+        classes = getattr(base_model, "classes_", None)
+    pos_index = None
+    if classes is not None:
+        class_list = list(classes)
+        if 1 in class_list:
+            pos_index = class_list.index(1)
+        elif "strike" in class_list:
+            pos_index = class_list.index("strike")
+    if pos_index is None:
+        pos_index = arr.shape[1] - 1
+    return arr[:, pos_index]
+
+
 def train_flaml_regressor(
     name: str,
     X: pd.DataFrame,
@@ -39,20 +97,33 @@ def train_flaml_regressor(
     seed: int,
 ) -> AutoML:
     """Train a single-target FLAML regressor with a compact configuration."""
-    automl = AutoML()
-    settings = {
-        "task": "regression",
-        "metric": "mae",
-        "eval_method": "cv",
-        "seed": seed,
-        "time_budget": 360,  # seconds; adjust if you want a deeper search
-        "verbose": 1,
-    }
-    print(f"Training FLAML regressor for {name} (time_budget={settings['time_budget']}s)...")
-    automl.fit(X_train=X, y_train=y, **settings)
-    best_loss = automl.best_loss if automl.best_loss is not None else float("nan")
-    print(f"[{name}] Best CV MAE≈{best_loss:.3f} ft (estimator={automl.best_estimator})")
-    return automl
+    return _train_flaml_model(
+        name=name,
+        task="regression",
+        metric="mae",
+        X=X,
+        y=y,
+        seed=seed,
+        time_budget=360,
+    )
+
+
+def train_flaml_classifier(
+    name: str,
+    X: pd.DataFrame,
+    y: np.ndarray,
+    seed: int,
+) -> AutoML:
+    """Train a FLAML classifier for ball/strike identification."""
+    return _train_flaml_model(
+        name=name,
+        task="classification",
+        metric="log_loss",
+        X=X,
+        y=y,
+        seed=seed,
+        time_budget=240,
+    )
 
 
 def log_model_artifacts(
@@ -74,7 +145,9 @@ def log_model_artifacts(
     }
 
     if shap is None:
-        warnings.warn("shap not installed; skipping SHAP plot generation.", RuntimeWarning)
+        warnings.warn(
+            "shap not installed; skipping SHAP plot generation.", RuntimeWarning
+        )
         metadata_path.write_text(json.dumps(metadata, indent=2))
         return
 
@@ -154,7 +227,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path("trajectory_regression_predictions.csv"),
-        help="Where to save test-time plate_x / plate_z predictions.",
+        help="Where to save test-time plate_x / plate_z / strike_proba predictions.",
     )
     parser.add_argument(
         "--no-test",
@@ -176,18 +249,24 @@ def main() -> None:
     if not args.train_meta.exists():
         raise FileNotFoundError(f"Training metadata not found: {args.train_meta}")
     if not args.train_detections.exists():
-        raise FileNotFoundError(f"Training detections not found: {args.train_detections}")
+        raise FileNotFoundError(
+            f"Training detections not found: {args.train_detections}"
+        )
 
     has_test = not args.no_test
     if has_test:
         if not args.test_meta.exists():
             raise FileNotFoundError(f"Test metadata not found: {args.test_meta}")
         if not args.test_detections.exists():
-            raise FileNotFoundError(f"Test detections not found: {args.test_detections}")
+            raise FileNotFoundError(
+                f"Test detections not found: {args.test_detections}"
+            )
 
     print("Loading metadata...")
-    train_meta = pd.read_csv(args.train_meta)
-    test_meta = pd.read_csv(args.test_meta) if has_test else None
+    train_meta = augment_statcast_metadata(pd.read_csv(args.train_meta))
+    test_meta = (
+        augment_statcast_metadata(pd.read_csv(args.test_meta)) if has_test else None
+    )
 
     print("Loading detections and building trajectory features...")
     train_det = pd.read_csv(args.train_detections)
@@ -196,11 +275,13 @@ def main() -> None:
     traj_train = build_aligned_trajectory_features(train_meta, train_det)
     train_meta = train_meta.copy()
     train_meta[traj_train.columns] = traj_train
+    train_meta = add_statcast_interactions(train_meta)
 
     if has_test and test_meta is not None and test_det is not None:
         traj_test = build_aligned_trajectory_features(test_meta, test_det)
         test_meta = test_meta.copy()
         test_meta[traj_test.columns] = traj_test
+        test_meta = add_statcast_interactions(test_meta)
     else:
         traj_test = None
         test_meta = test_meta if has_test else None
@@ -218,14 +299,28 @@ def main() -> None:
     else:
         X_test = None
 
+    if "zone" not in train_meta.columns:
+        raise KeyError("Training metadata must include 'zone' for strike labels.")
+
     y_train = train_meta[["plate_x", "plate_z"]].to_numpy(dtype=float)
+    strike_target = (train_meta["zone"] <= 9).astype(int).to_numpy()
 
     print(f"Training samples with trajectories: {X_train.shape[0]}")
     print(f"Feature dimensionality: {X_train.shape[1]}")
-    # Train separate FLAML regressors for plate_x and plate_z.
-    model_x = train_flaml_regressor("plate_x", X_train, y_train[:, 0], args.random_state)
-    model_z = train_flaml_regressor("plate_z", X_train, y_train[:, 1], args.random_state)
 
+    strike_model = train_flaml_classifier(
+        "strike_classifier", X_train, strike_target, args.random_state
+    )
+
+    # Train separate FLAML regressors for plate_x and plate_z.
+    model_x = train_flaml_regressor(
+        "plate_x", X_train, y_train[:, 0], args.random_state
+    )
+    model_z = train_flaml_regressor(
+        "plate_z", X_train, y_train[:, 1], args.random_state
+    )
+
+    log_model_artifacts("strike_classifier", strike_model, X_train)
     log_model_artifacts("plate_x", model_x, X_train)
     log_model_artifacts("plate_z", model_z, X_train)
 
@@ -233,12 +328,15 @@ def main() -> None:
         print("Predicting plate_x / plate_z for test set...")
         plate_x_pred = model_x.predict(X_test)
         plate_z_pred = model_z.predict(X_test)
+        raw_strike_proba = strike_model.predict_proba(X_test)
+        strike_proba = _positive_class_probability(strike_model, raw_strike_proba)
 
         output_df = pd.DataFrame(
             {
                 "file_name": test_meta["file_name"],
                 "plate_x_pred": plate_x_pred,
                 "plate_z_pred": plate_z_pred,
+                "strike_proba": strike_proba,
             }
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -247,8 +247,8 @@ This section describes the end-to-end approach implemented in this repository.
 The solution follows a **three-stage pipeline**:
 
 1. **Stage 1 – Object Detection**: Run a YOLO model on each video to extract frame-by-frame bounding boxes for **baseball**, **homeplate**, and **rubber**.
-2. **Stage 2 – Plate Crossing Regression**: Combine the detection features with Statcast metadata, then train gradient-boosted regressors (via FLAML AutoML) to predict `plate_x` and `plate_z`.
-3. **Stage 3 – Label Derivation**: Apply the MLB strike-zone geometry to the predicted crossing coordinates, producing the final `pitch_class` and `zone` labels.
+2. **Stage 2 – Strike Classification + Plate Regression**: Combine the detection features with Statcast metadata, train a FLAML classifier that outputs strike probability, and train gradient-boosted regressors (via FLAML AutoML) to predict `plate_x` and `plate_z`.
+3. **Stage 3 – Label Derivation**: Apply the MLB strike-zone geometry plus the strike probability signal to produce the final `pitch_class` and `zone` labels.
 
 ---
 
@@ -354,11 +354,12 @@ The script:
 1. Loads metadata and detection CSVs.
 2. Calls `build_aligned_trajectory_features()` to merge detection summaries with metadata.
 3. Fits the shared `FeaturePipeline` (median imputation, categorical encoding).
-4. Trains **two separate FLAML AutoML regressors**:
+4. Trains a **FLAML AutoML strike classifier** that outputs the probability a pitch will end inside the strike zone (`strike_proba`).
+5. Trains **two separate FLAML AutoML regressors**:
    - `plate_x` regressor (horizontal crossing)
    - `plate_z` regressor (vertical crossing)
-5. Logs model metadata and SHAP feature importance plots to `logs/`.
-6. Writes `trajectory_regression_predictions.csv` with columns: `file_name`, `plate_x_pred`, `plate_z_pred`.
+6. Logs model metadata and SHAP feature importance plots to `logs/`.
+7. Writes `trajectory_regression_predictions.csv` with columns: `file_name`, `plate_x_pred`, `plate_z_pred`, `strike_proba`.
 
 #### FLAML Configuration
 
@@ -381,7 +382,7 @@ The script:
 
 **Script**: `derive_plate_labels.py`
 
-Once we have `(plate_x_pred, plate_z_pred)` for each test video, we apply the MLB strike-zone geometry to produce the final submission labels.
+Once we have `(plate_x_pred, plate_z_pred, strike_proba)` for each test video, we apply the MLB strike-zone geometry and the classifier-informed hybrid logic to produce the final submission labels. High-confidence strike probabilities can override the coordinate-only decision near the zone boundary (mirroring the notebook’s approach).
 
 ```bash
 python derive_plate_labels.py \
@@ -399,6 +400,8 @@ A pitch is classified as **strike** if:
 ```
 
 Where `r = 1.5 / 12` ft (baseball radius). Otherwise, it's a **ball**.
+
+If the coordinate-based decision disagrees with the learned strike probability, the hybrid logic can override it when the classifier is highly confident (≤0.35 for balls, ≥0.65 for strikes). This prevents obvious mislabels near the edges.
 
 #### Zone Assignment (`zone`)
 
